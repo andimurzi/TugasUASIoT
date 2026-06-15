@@ -1,111 +1,100 @@
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const cors = require("cors");
-const bodyParser = require("body-parser");
-const path = require("path");
-const fs = require("fs");
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
+
+// 1. Pengaturan CORS yang sangat terbuka untuk Server Cloud
+app.use(cors({
     origin: "*",
     methods: ["GET", "POST"],
-    credentials: true,
-  },
-  allowEIO3: true, // Membantu kompatibilitas handshake di server cloud
+    credentials: true
+}));
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Buat HTTP server secara eksplisit (Wajib untuk Socket.io di Cloud)
+const server = http.createServer(app);
+
+// 2. Inisialisasi Socket.io dengan konfigurasi kecocokan Engine Cloud
+const io = new Server(server, {
+    cors: {
+      origin: "*",
+      methods: ["GET", "POST"],
+      credentials: true
+    },
+    transports: ['websocket', 'polling'],
+    allowEIO3: true
 });
 
-// GANTI BARIS INI (Sangat Penting untuk Railway)
-const PORT = process.env.PORT || 3000;
-const CSV_FILE = "data_sensor.csv";
+const CSV_FILE = path.join(__dirname, 'data_sensor.csv');
 
-app.use(cors());
-app.use(bodyParser.json());
-app.use(express.static(path.join(__dirname, "public")));
-
-// Cek apakah file CSV sudah ada, jika belum buat file baru beserta headernya
-if (!fs.existsSync(CSV_FILE)) {
-  fs.writeFileSync(CSV_FILE, "Timestamp,Raw_Value,Water_Level_Pct\n");
-}
-
-// 1. ENDPOINT POST: Menerima data dari ESP8266 & Simpan ke CSV
-app.post("/api/data", (req, res) => {
-  const { water_level, raw_value } = req.body;
-
-  if (water_level === undefined || raw_value === undefined) {
-    return res
-      .status(400)
-      .json({ status: "error", message: "Data tidak lengkap" });
-  }
-
-  const timestamp = new Date().toLocaleTimeString("id-ID", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-
-  // Susun baris data CSV
-  const barisDataCSV = `${timestamp},${raw_value},${water_level}\n`;
-
-  // Simpan ke file CSV
-  fs.appendFile(CSV_FILE, barisDataCSV, (err) => {
-    if (err) console.error("Gagal menulis ke CSV:", err);
-  });
-
-  // Kirim data real-time ke web utama lewat Socket.io
-  io.emit("sensor-update", {
-    water_level: parseInt(water_level),
-    raw_value: parseInt(raw_value),
-    timestamp,
-  });
-
-  console.log(
-    `[ESP8266] Data Masuk -> Level: ${water_level}%, Raw: ${raw_value}`,
-  );
-
-  // Set header agar koneksi langsung disudahi dengan bersih setelah merespon
-  res.setHeader("Connection", "close");
-  res.status(200).json({ status: "success", message: "Data terlog di CSV" });
+// Jalur Web Static untuk Dashboard
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// 2. ENDPOINT GET: Membaca isi CSV untuk grafik awal Dashboard Web agar tidak kosong
-app.get("/api/history", (req, res) => {
-  if (!fs.existsSync(CSV_FILE)) {
-    return res.json([]);
-  }
+// API Endpoint untuk menerima data dari ESP8266 via HTTP POST
+app.post('/api/data', (req, res) => {
+    const { water_level, raw_value } = req.body;
+    
+    // Ambil waktu lokal Jakarta/Semarang (WIB)
+    const options = { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+    const timestamp = new Date().toLocaleTimeString('id-ID', options);
+    
+    const logData = {
+        water_level: parseInt(water_level) || 0,
+        raw_value: parseInt(raw_value) || 0,
+        timestamp: timestamp
+    };
+    
+    console.log(`[ESP8266] Data Masuk -> Level: ${logData.water_level}%, Raw: ${logData.raw_value}`);
+    
+    // Tembakkan data real-time ke halaman Web browser via Socket.io
+    io.emit('sensor-update', logData);
+    
+    // Simpan data ke berkas CSV sebagai riwayat histori grafik
+    const csvLine = `${timestamp},${logData.water_level},${logData.raw_value}\n`;
+    fs.appendFile(CSV_FILE, csvLine, (err) => {
+        if (err) console.error("Gagal menulis ke file CSV:", err);
+    });
+    
+    res.status(200).json({ status: 'success', message: 'Data berhasil diterima' });
+});
 
-  try {
-    const dataCSV = fs.readFileSync(CSV_FILE, "utf-8");
-    const baris = dataCSV.trim().split("\n");
-    const dataLog = [];
-
-    // Looping data (Lewati baris index 0 karena itu header/judul kolom)
-    for (let i = 1; i < baris.length; i++) {
-      const kolom = baris[i].split(",");
-      if (kolom.length === 3) {
-        dataLog.push({
-          timestamp: kolom[0],
-          raw_value: parseInt(kolom[1]),
-          water_level: parseInt(kolom[2]),
-        });
-      }
+// API Endpoint untuk memuat riwayat data awal di grafik chart
+app.get('/api/history', (req, res) => {
+    if (!fs.existsSync(CSV_FILE)) {
+        return res.json([]);
     }
-
-    // Kirim 15 data terakhir ke dashboard web kamu
-    res.json(dataLog.slice(-15));
-  } catch (error) {
-    console.error("Gagal membaca history CSV:", error);
-    res.status(500).json({ message: "Gagal membaca riwayat data" });
-  }
+    
+    fs.readFile(CSV_FILE, 'utf8', (err, data) => {
+        if (err) return res.status(500).json([]);
+        
+        const lines = data.trim().split('\n');
+        const history = lines.map(line => {
+            const [timestamp, water_level, raw_value] = line.split(',');
+            return {
+                timestamp,
+                water_level: parseInt(water_level) || 0,
+                raw_value: parseInt(raw_value) || 0
+            };
+        });
+        
+        // Batasi hanya mengambil 15 data terakhir agar grafik tidak terlalu padat
+        res.json(history.slice(-15));
+    });
 });
 
-// Membuka server ke IP "0.0.0.0" agar bisa diakses oleh ESP8266 dari Wi-Fi luar
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server IoT Berjalan di Port: ${PORT}`);
-  console.log(`===================================================`);
-  console.log(` Server IoT Berjalan di http://localhost:${PORT}`);
-  console.log(` Siap menerima data di http://192.168.100.62:${PORT}/api/data`);
-  console.log(`===================================================`);
+// 3. Penyetelan Port Dinamis Otomatis Railway (Gunakan 0.0.0.0)
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`===================================================`);
+    console.log(` Server IoT Berjalan Sukses di Port: ${PORT}`);
+    console.log(`===================================================`);
 });
