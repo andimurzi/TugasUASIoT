@@ -1,0 +1,113 @@
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const cors = require("cors");
+const fs = require("fs");
+const path = require("path");
+
+const app = express();
+
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST"],
+    credentials: true,
+  }),
+);
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, "public")));
+
+const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
+  transports: ["websocket", "polling"],
+  allowEIO3: true,
+});
+
+const CSV_FILE = path.join(__dirname, "data_sensor.csv");
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+// Pintu utama penerima data dari ESP8266
+app.post("/api/data", (req, res) => {
+  const water_level = req.body.water_level || req.query.water_level;
+  const raw_value = req.body.raw_value || req.query.raw_value;
+
+  const options = {
+    timeZone: "Asia/Jakarta",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  };
+  const timestamp = new Date().toLocaleTimeString("id-ID", options);
+
+  const logData = {
+    water_level:
+      parseInt(water_level) !== undefined ? parseInt(water_level) : 0,
+    raw_value: parseInt(raw_value) !== undefined ? parseInt(raw_value) : 0,
+    timestamp: timestamp,
+  };
+
+  console.log(
+    `[ESP8266] Data Masuk -> Level: ${logData.water_level}%, Raw: ${logData.raw_value}`,
+  );
+
+  io.emit("sensor-update", logData);
+
+  const csvLine = `${timestamp},${logData.water_level},${logData.raw_value}\n`;
+  fs.appendFile(CSV_FILE, csvLine, (err) => {
+    if (err) console.error("Gagal menulis ke file CSV:", err);
+  });
+
+  res.status(200).json({
+    status: "success",
+    message: "Data berhasil diterima",
+    data: logData,
+  });
+});
+
+app.get("/api/history", (req, res) => {
+  if (!fs.existsSync(CSV_FILE)) {
+    return res.json([]);
+  }
+
+  fs.readFile(CSV_FILE, "utf8", (err, data) => {
+    if (err || !data) return res.status(500).json([]);
+
+    const lines = data
+      .trim()
+      .split("\n")
+      .filter((line) => line.trim() !== "");
+
+    const history = lines
+      .map((line) => {
+        const parts = line.split(",");
+        if (parts.length < 3) return null;
+        return {
+          timestamp: parts[0],
+          water_level: parseInt(parts[1]) || 0,
+          raw_value: parseInt(parts[2]) || 0,
+        };
+      })
+      .filter((item) => item !== null);
+
+    res.json(history.slice(-15));
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`===================================================`);
+  console.log(` Server IoT Berjalan Sukses di Port: ${PORT}`);
+  console.log(`===================================================`);
+});
