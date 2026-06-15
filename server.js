@@ -14,6 +14,7 @@ app.use(cors({
     credentials: true
 }));
 
+// Mengaktifkan pembaca format JSON dan URL-Encoded dari ESP8266
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -41,15 +42,17 @@ app.get('/', (req, res) => {
 
 // API Endpoint untuk menerima data dari ESP8266 via HTTP POST
 app.post('/api/data', (req, res) => {
-    const { water_level, raw_value } = req.body;
+    // PROTEKSI: Menerima data baik dari JSON (req.body) maupun parameter query URL (req.query)
+    const water_level = req.body.water_level || req.query.water_level;
+    const raw_value = req.body.raw_value || req.query.raw_value;
     
     // Ambil waktu lokal Jakarta/Semarang (WIB)
     const options = { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
     const timestamp = new Date().toLocaleTimeString('id-ID', options);
     
     const logData = {
-        water_level: parseInt(water_level) || 0,
-        raw_value: parseInt(raw_value) || 0,
+        water_level: parseInt(water_level) !== undefined ? parseInt(water_level) : 0,
+        raw_value: parseInt(raw_value) !== undefined ? parseInt(raw_value) : 0,
         timestamp: timestamp
     };
     
@@ -64,7 +67,7 @@ app.post('/api/data', (req, res) => {
         if (err) console.error("Gagal menulis ke file CSV:", err);
     });
     
-    res.status(200).json({ status: 'success', message: 'Data berhasil diterima' });
+    res.status(200).json({ status: 'success', message: 'Data berhasil diterima', data: logData });
 });
 
 // API Endpoint untuk memuat riwayat data awal di grafik chart
@@ -74,17 +77,20 @@ app.get('/api/history', (req, res) => {
     }
     
     fs.readFile(CSV_FILE, 'utf8', (err, data) => {
-        if (err) return res.status(500).json([]);
+        if (err || !data) return res.status(500).json([]);
         
-        const lines = data.trim().split('\n');
+        // PROTEKSI: Memfilter baris kosong agar tidak merusak fungsi split data
+        const lines = data.trim().split('\n').filter(line => line.trim() !== '');
+        
         const history = lines.map(line => {
-            const [timestamp, water_level, raw_value] = line.split(',');
+            const parts = line.split(',');
+            if (parts.length < 3) return null;
             return {
-                timestamp,
-                water_level: parseInt(water_level) || 0,
-                raw_value: parseInt(raw_value) || 0
+                timestamp: parts[0],
+                water_level: parseInt(parts[1]) || 0,
+                raw_value: parseInt(parts[2]) || 0
             };
-        });
+        }).filter(item => item !== null); // Buang data yang rusak jika ada
         
         // Batasi hanya mengambil 15 data terakhir agar grafik tidak terlalu padat
         res.json(history.slice(-15));
