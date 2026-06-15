@@ -12,7 +12,8 @@ const io = new Server(server, {
   cors: { origin: "*" },
 });
 
-const PORT = process.env.PORT || 3000;
+// GANTI BARIS INI (Sangat Penting untuk Railway)
+const PORT = process.env.PORT || 3500;
 const CSV_FILE = "data_sensor.csv";
 
 app.use(cors());
