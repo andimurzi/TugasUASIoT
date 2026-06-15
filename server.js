@@ -9,7 +9,12 @@ const fs = require("fs");
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: "*" },
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
+  allowEIO3: true, // Membantu kompatibilitas handshake di server cloud
 });
 
 // GANTI BARIS INI (Sangat Penting untuk Railway)
