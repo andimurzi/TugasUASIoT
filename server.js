@@ -78,13 +78,11 @@ app.post("/api/data", (req, res) => {
     if (err) console.error("Gagal menulis ke file CSV:", err);
   });
 
-  res
-    .status(200)
-    .json({
-      status: "success",
-      message: "Data berhasil diterima",
-      data: logData,
-    });
+  res.status(200).json({
+    status: "success",
+    message: "Data berhasil diterima",
+    data: logData,
+  });
 });
 
 // API Endpoint untuk memuat riwayat data awal di grafik chart
