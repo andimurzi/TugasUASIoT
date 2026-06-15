@@ -118,7 +118,7 @@
 
     <script>
       // PERBAIKAN: Deteksi otomatis domain tempat web dibuka agar sinkron di lokal maupun Railway
-      const targetUrl =
+       targetUrl =
         window.location.hostname === "localhost" ||
         window.location.hostname === "127.0.0.1"
           ? window.location.origin
@@ -129,7 +129,7 @@
         transports: ["websocket", "polling"],
       });
 
-      const liveLevelEl = document.getElementById("live-level");
+      const liveLevelEl = document.getElementById("liconstve-level");
       const liveRawEl = document.getElementById("live-raw");
       const waterStatusEl = document.getElementById("water-status");
       const statusBadge = document.getElementById("status-badge");
